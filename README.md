@@ -6,6 +6,12 @@ This project investigates running a standalone Linux-based RDP client directly
 on the L300 hardware, including framebuffer graphics, keyboard and mouse input,
 network booting, NAND deployment, and performance optimization.
 
+<p align="center">
+  <img src="docs/images/ncomputing-l300-mainboard-top.jpeg"
+       alt="NComputing L300 mainboard"
+       width="650">
+</p>
+
 ## Stage 1
 
 Stage 1 has been tested on physical NComputing L300 hardware.
@@ -42,6 +48,15 @@ The tested platform is an NComputing L300 using:
 
 This is an unusually old embedded Linux environment. Modern ARM Linux binaries
 cannot simply be copied to the device.
+
+### Development setup
+
+Development and hardware validation were performed directly on physical
+NComputing L300 hardware using serial access for bootloader and kernel
+diagnostics.
+
+![NComputing L300 development and debug setup](docs/images/ncomputing-l300-debug-setup.jpeg)
+
 
 ## Mouse compatibility
 

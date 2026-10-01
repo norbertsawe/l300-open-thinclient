@@ -1,0 +1,87 @@
+HISTORICAL STAGE-1 PROCEDURE
+
+This procedure records the commands used during hardware validation.
+Some referenced firmware artifacts and development directories are not
+distributed in this repository. Do not execute these commands unchanged
+unless you have independently prepared and verified the referenced files.
+
+LATER MANUAL FLASH PLAN — NOT EXECUTED, NOT YET APPROVED BY HARDWARE TEST
+
+First complete RAM-TEST.txt. Flash only after confirming:
+boot, RDP connection, correct colors, correct mouse, correct keyboard,
+1024x768 output, AND substantially improved rendering on the real L300.
+If improvement is absent or anything regresses, keep the current NAND baseline.
+
+This plan uses the known 128 MiB NAND layout and 0x20000 erase blocks.
+rootfs offset 0x600000; FWD offset 0x80000; FWD rootfs byte-size field 0x54.
+rootfs erase span 0x4a0000 (rounded up over old and new image sizes).
+FWD erase span 0x20000; FWD payload 180 bytes (0xb4).
+Reconfirm nand info/nand bad and the reference layout on the actual board.
+Require enough good blocks within the rootfs reserved range 0x600000..0x1200000;
+bad-block skipping must not reach unrelated data. Do not proceed on NAND errors,
+unexpected geometry, or unverified backups. Have stable power and serial/USB
+recovery available. These commands follow the project's existing jffs2 NAND I/O
+procedure; they have not been executed on the disconnected board.
+
+Stage and hash-check the candidate files as in RAM-TEST.txt. At U-Boot:
+setenv serverip 192.168.1.10
+setenv ipaddr 192.168.1.200
+setenv ethaddr 02:0e:ea:0b:3f:3b
+
+Run individually, rootfs first and FWD only after successful rootfs readback:
+
+tftpboot 0x800000 l300_initramfs_PERFORMANCE_v1.gz
+crc32 0x800000 0x489992
+# STOP unless transfer size = 0x489992 and CRC = c39f1a0c
+nand erase 0x600000 0x4a0000
+nand write.jffs2 0x800000 0x600000 0x489992
+nand read.jffs2 0x1000000 0x600000 0x489992
+crc32 0x1000000 0x489992
+# STOP unless readback CRC = c39f1a0c
+
+tftpboot 0x800000 l300_fwd_PERFORMANCE_v1.fwd
+crc32 0x800000 0xb4
+# STOP unless transfer size = 0xb4 and CRC = f82a8701
+nand erase 0x80000 0x20000
+nand write.jffs2 0x800000 0x80000 0xb4
+nand read.jffs2 0x1000000 0x80000 0xb4
+crc32 0x1000000 0xb4
+# STOP unless readback CRC = f82a8701
+
+
+After BOTH readback CRCs match, reset and let autoboot expire. Never saveenv.
+Do not rewrite the kernel, U-Boot, X-Loader or other NAND regions.
+
+ROLLBACK REFERENCE (production final-v1 remains untouched)
+l300-appliance-build/final-v1/l300_initramfs_appliance.gz
+SHA256 b7d9f3bcb303fb27adf98c59b3d44d6ab722cd15603423e2172c96d48e2fbd36
+l300-appliance-build/final-v1/l300_fwd_appliance.fwd
+SHA256 8d3f9c9001057c36f2809f8c87312b99e59b028f6648e5263e3f6c3078bce9b7
+
+A failed RAM test requires only a power cycle: production NAND is unchanged.
+If rolling back AFTER a future flash, first stage unique rollback filenames:
+sudo cp --no-clobber l300-appliance-build/final-v1/l300_initramfs_appliance.gz /srv/tftp/l300_initramfs_ROLLBACK_final_v1.gz
+sudo cp --no-clobber l300-appliance-build/final-v1/l300_fwd_appliance.fwd /srv/tftp/l300_fwd_ROLLBACK_final_v1.fwd
+Verify staged SHA256 values above. Use the same network settings and geometry
+checks. These rollback NAND commands are also a MANUAL PLAN, never executed here:
+
+tftpboot 0x800000 l300_initramfs_ROLLBACK_final_v1.gz
+crc32 0x800000 0x4892d4
+# STOP unless transfer size = 0x4892d4 and CRC = 81b52430
+nand erase 0x600000 0x4a0000
+nand write.jffs2 0x800000 0x600000 0x4892d4
+nand read.jffs2 0x1000000 0x600000 0x4892d4
+crc32 0x1000000 0x4892d4
+# STOP unless readback CRC = 81b52430
+
+tftpboot 0x800000 l300_fwd_ROLLBACK_final_v1.fwd
+crc32 0x800000 0xb4
+# STOP unless transfer size = 0xb4 and CRC = 61622233
+nand erase 0x80000 0x20000
+nand write.jffs2 0x800000 0x80000 0xb4
+nand read.jffs2 0x1000000 0x80000 0xb4
+crc32 0x1000000 0xb4
+# STOP unless readback CRC = 61622233
+
+
+After both readbacks match, reset and let autoboot expire. Never saveenv.

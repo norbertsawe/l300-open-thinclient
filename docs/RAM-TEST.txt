@@ -1,0 +1,67 @@
+HISTORICAL STAGE-1 PROCEDURE
+
+This procedure records the commands used during hardware validation.
+Some referenced firmware artifacts and development directories are not
+distributed in this repository. Do not execute these commands unchanged
+unless you have independently prepared and verified the referenced files.
+
+L300 PERFORMANCE v1 — FIRST PHYSICAL TEST, RAM ONLY
+Status: host/QEMU verified, NOT hardware verified. No NAND has been touched.
+
+On the development host:
+cd l300-appliance-build/performance-v1
+sha256sum -c SHA256SUMS
+sudo cp --no-clobber l300_initramfs_PERFORMANCE_v1.gz l300_fwd_PERFORMANCE_v1.fwd /srv/tftp/
+sha256sum /srv/tftp/l300_initramfs_PERFORMANCE_v1.gz /srv/tftp/l300_fwd_PERFORMANCE_v1.fwd
+Require the hashes in SHA256SUMS. If either name already exists with a different
+hash, stop; do not overwrite it. The copy needs your host sudo password.
+Use the existing known-good /srv/tftp/uImage (size 0x1913e0, CRC a2ee241a).
+TFTP server stays 192.168.1.10. FWD is not used for a RAM boot.
+
+Connect serial at 115200 8N1 and interrupt autoboot. Run one command at a time.
+Stop on any TFTP error, unexpected byte count, or CRC mismatch.
+Kernel CRC must be a2ee241a; initramfs CRC must be c39f1a0c.
+Initramfs size is 4757906 bytes (0x489992).
+
+setenv serverip 192.168.1.10
+setenv ipaddr 192.168.1.200
+setenv ethaddr 02:0e:ea:0b:3f:3b
+tftpboot 0x800000 uImage
+crc32 0x800000 0x1913e0
+tftpboot 0x1000000 l300_initramfs_PERFORMANCE_v1.gz
+crc32 0x1000000 0x489992
+setenv bootargs console=ttyS0,115200 mem=108M initrd=0x1000000,0x489992
+bootm 0x800000
+
+Do not use saveenv, nand, or the broken manual 'boot' command in this RAM test.
+All setenv changes above are temporary. Let a power cycle autoboot the current
+production NAND to recover; final-v1 files are also preserved at l300-appliance-build/final-v1.
+
+Test the same Windows Server, application and content as the production image:
+1. Automatic boot, Ethernet/DHCP, TLS/pinned RDP and 1024x768 desktop.
+2. Red, green and blue patches; text clarity; no swapped channels.
+3. Scroll a long text page, drag windows, open/close menus and type while updates
+   are arriving. Compare responsiveness with production; no measured hardware
+   FPS is promised. A phone video of the same workload can help comparison.
+4. Move the mouse slowly/quickly in every direction; no edge jumps or scrolling
+   with the wheel untouched. Test wheel both ways and left/right/middle press
+   and release, dragging, no stuck buttons, keyboard and Ctrl+Alt+F12.
+5. Move the cursor across changing content and all four edges: no trails,
+   stale rectangles, flicker/corruption or missing updates. Repeat during heavy
+   scrolling. Check disconnect/reconnect and sustained operation.
+
+EXPECTED LOGGING
+Kernel boot output is available on serial as before. The preserved rc.sh uses
+klogd -c 1; supervisor captures the client output to RAM, not serial.
+No TMPUSB/TMPFIX or per-event MOUSE-DIAG flood is expected.
+/var/log/thinclient/session.log should include:
+  fbdev: 1024x768, 24 bpp, stride 3072, RGB offsets 0/8/16
+  TLS connection established
+  Connected: 1024x768, server 16 bpp, GDI RGB565. Ctrl+Alt+F12 exits.
+  L300 PERFORMANCE v1: packed RGB24, bounded damage, TLS pending-data dispatch.
+Existing input device lines should include the Tempest mouse/keyboard.
+/var/log/thinclient/boot.log holds initialization messages.
+Production configuration keeps maintenance SSH disabled; no new access path
+or serial shell is added. Return available boot/error output and visual results
+after the board is available; no incremental test is required during development.
+Do not flash until all seven acceptance checks in FLASH-AFTER-VALIDATION.txt pass.

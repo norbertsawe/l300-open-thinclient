@@ -1,0 +1,20 @@
+HISTORICAL STAGE-1 PROCEDURE
+
+This procedure records the commands used during hardware validation.
+Some referenced firmware artifacts and development directories are not
+distributed in this repository. Do not execute these commands unchanged
+unless you have independently prepared and verified the referenced files.
+
+The existing NAND image has not been modified. After a RAM test, power-cycle and
+let the normal autoboot timer expire to return to production.
+
+Production backup directory: l300-appliance-build/final-v1/
+Image: l300_initramfs_appliance.gz
+Bytes: 4756180 (0x4892d4), CRC32 81b52430
+SHA256 b7d9f3bcb303fb27adf98c59b3d44d6ab722cd15603423e2172c96d48e2fbd36
+FWD: l300_fwd_appliance.fwd
+Bytes: 180 (0xb4), CRC32 61622233
+SHA256 8d3f9c9001057c36f2809f8c87312b99e59b028f6648e5263e3f6c3078bce9b7
+
+If a future flash needs reversing, use the complete geometry-gated rollback plan
+in FLASH-AFTER-VALIDATION.txt. Never use saveenv. Preserve final-v1 files.

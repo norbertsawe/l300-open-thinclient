@@ -1,0 +1,391 @@
+--- a/include/freerdp/freerdp.h
++++ b/include/freerdp/freerdp.h
+@@ -150,6 +150,10 @@
+ freerdp_new(rdpSet * settings);
+ FREERDP_API void
+ freerdp_free(rdpInst * inst);
++#ifdef L300_STATIC
++/* Decrypted transport bytes can remain even when the socket is not readable. */
++FREERDP_API int freerdp_has_pending_data(rdpInst * inst);
++#endif
+ 
+ #ifdef __cplusplus
+ }
+--- a/l300/fbfreerdp.c
++++ b/l300/fbfreerdp.c
+@@ -300,49 +300,85 @@
+     return ok ? 0 : -1;
+ }
+ 
++/* Four RGB24 pixels become three aligned word stores on little-endian ARM.
++ * Byte stores handle unaligned edges. No unaligned ARM word accesses. */
++static void convert_row(Frontend *f, unsigned char *dst, const uint16 *src, int n)
++{
++    uint32 a,b,c,d;
++    if (f->bytes == 3) {
++        while (n && ((unsigned long)dst & 3)) {
++            a=f->lut[*src++]; dst[0]=a; dst[1]=a>>8; dst[2]=a>>16;
++            dst+=3; n--;
++        }
++        while (n>=4) {
++            a=f->lut[src[0]]; b=f->lut[src[1]];
++            c=f->lut[src[2]]; d=f->lut[src[3]];
++            ((uint32 *)dst)[0]=a | (b<<24);
++            ((uint32 *)dst)[1]=(b>>8) | (c<<16);
++            ((uint32 *)dst)[2]=(c>>16) | (d<<8);
++            dst+=12; src+=4; n-=4;
++        }
++        while (n--) {
++            a=f->lut[*src++]; dst[0]=a; dst[1]=a>>8; dst[2]=a>>16; dst+=3;
++        }
++    } else {
++        while (n--) { store_pixel(dst,f->lut[*src++],f->bytes); dst+=f->bytes; }
++    }
++}
++
++#ifdef L300_PERF_TEST
++static unsigned long test_present_pixels, test_present_calls;
++#endif
+ static void present(rdpInst *inst, int x, int y, int w, int h)
+ {
+-    Frontend *f = front(inst);
+-    GDI *g = GET_GDI(inst);
+-    int xx, yy, right, bottom, cx, cy;
+-    uint32 pixel, cp, a, r, green, b;
+-    uint16 *src;
+-    unsigned char *dst;
+-    Cursor *c = f->cursor;
+-    if (!g || !f->memory || w <= 0 || h <= 0) return;
+-    /* Regions originate in network drawing orders; avoid overflowing x+w. */
+-    if (x < -MAX_WIDTH || y < -MAX_HEIGHT || x > g->width || y > g->height) return;
+-    if (w > MAX_WIDTH*2) w = MAX_WIDTH*2;
+-    if (h > MAX_HEIGHT*2) h = MAX_HEIGHT*2;
+-    right = x + w; bottom = y + h;
+-    if (x < 0) x = 0;
+-    if (y < 0) y = 0;
+-    if (right > g->width) right = g->width;
+-    if (bottom > g->height) bottom = g->height;
+-    if (right > f->width) right = f->width;
+-    if (bottom > f->height) bottom = f->height;
++    Frontend *f=front(inst); GDI *g=GET_GDI(inst);
++    int xx,yy,right,bottom,left,top,cr,cb,cx,cy;
++    uint32 pixel,cp,a,r,green,b;
++    const uint16 *src; unsigned char *dst; Cursor *c=f->cursor;
++    if (!g || !f->memory || w<=0 || h<=0) return;
++    if (x < -MAX_WIDTH || y < -MAX_HEIGHT || x>g->width || y>g->height) return;
++    if (w>MAX_WIDTH*2) w=MAX_WIDTH*2;
++    if (h>MAX_HEIGHT*2) h=MAX_HEIGHT*2;
++    right=x+w; bottom=y+h;
++    if (x<0) x=0;
++    if (y<0) y=0;
++    if (right>g->width) right=g->width;
++    if (bottom>g->height) bottom=g->height;
++    if (right>f->width) right=f->width;
++    if (bottom>f->height) bottom=f->height;
++    if (x>=right || y>=bottom) return;
++#ifdef L300_PERF_TEST
++    test_present_pixels+=(right-x)*(bottom-y); test_present_calls++;
++#endif
+     for (yy=y; yy<bottom; yy++) {
+-        src = (uint16 *)g->primary_buffer + yy*g->width + x;
+-        dst = f->memory + (yy+f->yoffset)*f->pitch + (x+f->xoffset)*f->bytes;
+-        for (xx=x; xx<right; xx++, src++, dst+=f->bytes) {
+-            pixel = f->lut[*src];
+-            if (c && !f->hidden) {
+-                cx = xx - f->mouse_x + c->hotx;
+-                cy = yy - f->mouse_y + c->hoty;
+-                if (cx >= 0 && cy >= 0 && cx < c->width && cy < c->height) {
+-                    cp = c->pixels[cy*c->width+cx]; a = cp >> 24;
+-                    if (a) {
+-                        r = (cp >> 16) & 255; green = (cp >> 8) & 255; b = cp & 255;
+-                        if (a != 255) {
+-                            r = (r*a + (((*src >> 11)*255)/31)*(255-a))/255;
+-                            green = (green*a + ((((*src >> 5)&63)*255)/63)*(255-a))/255;
+-                            b = (b*a + (((*src&31)*255)/31)*(255-a))/255;
+-                        }
+-                        pixel = fb_colour(f, r, green, b);
+-                    }
+-                }
++        src=(uint16 *)g->primary_buffer+yy*g->width+x;
++        dst=f->memory+(yy+f->yoffset)*f->pitch+(x+f->xoffset)*f->bytes;
++        convert_row(f,dst,src,right-x);
++    }
++    /* Cursor work is bounded by its intersection, never by desktop area.
++     * Restore from the authoritative GDI backing store; no framebuffer reads. */
++    if (!c || f->hidden) return;
++    left=f->mouse_x-c->hotx; top=f->mouse_y-c->hoty;
++    cr=left+c->width; cb=top+c->height;
++    if (left<x) left=x;
++    if (top<y) top=y;
++    if (cr>right) cr=right;
++    if (cb>bottom) cb=bottom;
++    if (left>=cr || top>=cb) return;
++    for (yy=top; yy<cb; yy++) {
++        cy=yy-f->mouse_y+c->hoty;
++        src=(uint16 *)g->primary_buffer+yy*g->width+left;
++        dst=f->memory+(yy+f->yoffset)*f->pitch+(left+f->xoffset)*f->bytes;
++        for (xx=left; xx<cr; xx++,src++,dst+=f->bytes) {
++            cx=xx-f->mouse_x+c->hotx; cp=c->pixels[cy*c->width+cx]; a=cp>>24;
++            if (!a) continue;
++            r=(cp>>16)&255; green=(cp>>8)&255; b=cp&255;
++            if (a!=255) {
++                r=(r*a+(((*src>>11)*255)/31)*(255-a))/255;
++                green=(green*a+((((*src>>5)&63)*255)/63)*(255-a))/255;
++                b=(b*a+(((*src&31)*255)/31)*(255-a))/255;
+             }
+-            store_pixel(dst, pixel, f->bytes);
++            pixel=fb_colour(f,r,green,b); store_pixel(dst,pixel,f->bytes);
+         }
+     }
+ }
+@@ -359,8 +395,19 @@
+     int w=g ? g->width : f->width, h=g ? g->height : f->height;
+     f->mouse_x = x < 0 ? 0 : (x >= w ? w-1 : x);
+     f->mouse_y = y < 0 ? 0 : (y >= h ? h-1 : y);
+-    cursor_rect(inst, f->cursor, oldx, oldy);
+-    cursor_rect(inst, f->cursor, f->mouse_x, f->mouse_y);
++    if (oldx==f->mouse_x && oldy==f->mouse_y) return;
++    if (f->cursor && !f->hidden) {
++        Cursor *c=f->cursor;
++        int left=oldx<f->mouse_x ? oldx : f->mouse_x;
++        int top=oldy<f->mouse_y ? oldy : f->mouse_y;
++        int width=c->width+abs(f->mouse_x-oldx), height=c->height+abs(f->mouse_y-oldy);
++        if (width*height<=2*c->width*c->height)
++            present(inst,left-c->hotx,top-c->hoty,width,height);
++        else {
++            cursor_rect(inst,c,oldx,oldy);
++            cursor_rect(inst,c,f->mouse_x,f->mouse_y);
++        }
++    }
+ }
+ static void set_cursor(rdpInst *inst, RD_HCURSOR handle)
+ {
+@@ -406,7 +453,19 @@
+     GDI *g=GET_GDI(inst); HGDI_RGN r;
+     if (!g) return;
+     r=g->primary->hdc->hwnd->invalid;
+-    if (!r->null) present(inst, r->x, r->y, r->w, r->h);
++    if (!r->null) {
++        HGDI_WND wnd=g->primary->hdc->hwnd;
++        if (wnd->dirty_overflow || !wnd->dirty_count)
++            present(inst,r->x,r->y,r->w,r->h);
++        else {
++            int i;
++            for (i=0;i<wnd->dirty_count;i++) {
++                HGDI_RGN d=&wnd->dirty[i];
++                present(inst,d->x,d->y,d->w,d->h);
++            }
++        }
++        r->null=1;
++    }
+ }
+ static void log_error(rdpInst *inst, const char *text)
+ { fprintf(stderr, "RDP: %s\n", text); front(inst)->error=1; }
+@@ -632,14 +691,10 @@
+             FD_SET(f->input[i], &rfds);
+             if (f->input[i]>maxfd) maxfd=f->input[i];
+         }
+-        timeout.tv_sec=1; timeout.tv_usec=0;
++        timeout.tv_sec=freerdp_has_pending_data(inst) ? 0 : 1; timeout.tv_usec=0;
+         ret=select(maxfd+1, &rfds, &wfds, NULL, &timeout);
+         if (ret<0) { if (errno==EINTR) continue; perror("select"); return 1; }
+-        /* Bound synchronous reads of a partially delivered server packet. */
+-        alarm(f->timeout);
+-        ret=inst->rdp_check_fds(inst);
+-        alarm(0);
+-        if (ret != 0) return inst->disc_reason > 2 || f->error ? 1 : 0;
++        alarm(f->timeout); /* Bound input writes as well as partial packet reads. */
+         for (i=0; i<f->ninput; i++) if (FD_ISSET(f->input[i], &rfds)) {
+             got=read(f->input[i], events, sizeof(events));
+             if (got < 0 && (errno==EAGAIN || errno==EINTR)) continue;
+@@ -648,6 +703,10 @@
+             }
+             for (fd=0; fd<(int)(got/sizeof(events[0])); fd++) handle_input(inst, i, &events[fd]);
+         }
++        if (!running) { alarm(0); break; }
++        ret=inst->rdp_check_fds(inst);
++        alarm(0);
++        if (ret != 0) return inst->disc_reason > 2 || f->error ? 1 : 0;
+     }
+     return f->error ? 1 : 0;
+ }
+@@ -811,6 +870,7 @@
+     present(inst,0,0,settings.width,settings.height);
+     fprintf(stderr,"Connected: %dx%d, server %d bpp, GDI RGB565. Ctrl+Alt+F12 exits.\n",
+             settings.width,settings.height,settings.server_depth);
++    fprintf(stderr,"L300 PERFORMANCE v1: packed RGB24, bounded damage, TLS pending-data dispatch.\n");
+     rc=event_loop(inst);
+     if(appliance && f->local_exit) rc=75;
+ done_inst:
+@@ -894,6 +954,21 @@
+     CHECK(f->lut[0x07e0]==0x00ff00 && f->lut[0x001f]==0xff0000,"RGB565 green and blue conversion");
+     for (i=0;i<20;i++) { begin_update(inst); inst->ui_rect(inst,0,0,1024,768,i); end_update(inst); }
+     CHECK(GET_GDI(inst)->bytesPerPixel==2,"1.5 MiB desktop backing buffer at 1024x768");
++    {
++        HGDI_WND wnd=GET_GDI(inst)->primary->hdc->hwnd;
++        begin_update(inst);
++        inst->ui_rect(inst,0,0,20,20,0xf800);
++        inst->ui_rect(inst,1004,748,20,20,0x001f);
++        CHECK(wnd->dirty_count==2 && !wnd->dirty_overflow,
++              "distant damage stays two small rectangles");
++        end_update(inst);
++        CHECK(wnd->invalid->null,"completed update clears pending damage");
++        begin_update(inst);
++        inst->ui_rect(inst,10,10,20,20,0);
++        inst->ui_rect(inst,10,10,20,20,0);
++        CHECK(wnd->dirty_count==1,"duplicate damage coalesces once");
++        end_update(inst);
++    }
+     /* Protect the hardware-tested colour quirk without changing GDI RGB565. */
+     f->headless=0;
+     CHECK(fb_colour(f,255,0,0)==0xff0000 && fb_colour(f,0,0,255)==0x0000ff,
+--- a/libfreerdp-core/crypto/openssl.c
++++ b/libfreerdp-core/crypto/openssl.c
+@@ -551,6 +551,12 @@
+ }
+ 
+ /* Read data over TLS connection */
++#ifdef L300_STATIC
++int tls_pending(rdpTls * tls)
++{
++	return tls && tls->ssl ? SSL_pending(tls->ssl) : 0;
++}
++#endif
+ int
+ tls_read(rdpTls * tls, char* b, int length)
+ {
+--- a/libfreerdp-core/freerdp.c
++++ b/libfreerdp-core/freerdp.c
+@@ -459,6 +459,13 @@
+ }
+ 
+ /* Process receivable fds, return true if connection should live on */
++#ifdef L300_STATIC
++int freerdp_has_pending_data(rdpInst * inst)
++{
++	rdpRdp *rdp = RDP_FROM_INST(inst);
++	return rdp->net->tls_connected && tls_pending(rdp->net->tls) > 0;
++}
++#endif
+ static int
+ l_rdp_check_fds(rdpInst * inst)
+ {
+@@ -471,7 +478,11 @@
+ 	WSAResetEvent(rdp->net->tcp->wsa_event);
+ #endif
+ 	rv = 0;
+-	if (tcp_can_recv(rdp->net->tcp->sockfd, 0))
++	if (
++#ifdef L300_STATIC
++		freerdp_has_pending_data(inst) ||
++#endif
++		tcp_can_recv(rdp->net->tcp->sockfd, 0))
+ 	{
+ 		if (!rdp_loop(rdp, &deactivated))
+ 		{
+--- a/libfreerdp-core/tls.h
++++ b/libfreerdp-core/tls.h
+@@ -39,8 +39,10 @@
+ tls_write(rdpTls * tls, char * b, int length);
+ int
+ tls_read(rdpTls * tls, char * b, int length);
++#ifdef L300_STATIC
++int tls_pending(rdpTls * tls);
++#endif
+ CryptoCert
+ tls_get_certificate(rdpTls * tls);
+ 
+ #endif	// __TLS_H
+-
+--- a/libfreerdp-gdi/gdi.c
++++ b/libfreerdp-gdi/gdi.c
+@@ -533,6 +533,21 @@
+ 
+ 	DEBUG_GDI("ui_paint_bitmap: x:%d y:%d cx:%d cy:%d", x, y, cx, cy);
+ 
++#ifdef L300_STATIC
++	/* Decoded RGB565 already matches our backing store. Avoid allocating a
++	 * temporary bitmap/DC, copying to it, then copying it into the desktop. */
++	if (data && gdi->srcBpp == 16 && gdi->dstBpp == 16 && !gdi->clrconv->rgb555 &&
++		width > 0 && width <= 1024 && height > 0 && height <= 768 &&
++		cx > 0 && cx <= width && cy > 0 && cy <= height) {
++		int sx=0, sy=0, row;
++		if (!gdi_ClipCoords(gdi->primary->hdc, &x, &y, &cx, &cy, &sx, &sy)) return;
++		for (row=0; row<cy; row++)
++			memcpy(gdi->primary_buffer+((y+row)*gdi->width+x)*2,
++				data+((sy+row)*width+sx)*2, cx*2);
++		gdi_InvalidateRegion(gdi->primary->hdc,x,y,cx,cy);
++		return;
++	}
++#endif
+ 	gdi_bmp = (GDI_IMAGE*) inst->ui_create_bitmap(inst, width, height, data);
+ 	gdi_BitBlt(gdi->primary->hdc, x, y, cx, cy, gdi_bmp->hdc, 0, 0, GDI_SRCCOPY);
+ 	inst->ui_destroy_bitmap(inst, (RD_HBITMAP) gdi_bmp);
+--- a/libfreerdp-gdi/gdi.h
++++ b/libfreerdp-gdi/gdi.h
+@@ -196,6 +196,11 @@
+ struct _GDI_WND
+ {
+ 	HGDI_RGN invalid;
++#ifdef L300_STATIC
++	/* Bounded exact damage list; legacy bounding region is the overflow fallback. */
++	GDI_RGN dirty[64];
++	int dirty_count, dirty_overflow;
++#endif
+ };
+ typedef struct _GDI_WND GDI_WND;
+ typedef GDI_WND* HGDI_WND;
+--- a/libfreerdp-gdi/gdi_region.c
++++ b/libfreerdp-gdi/gdi_region.c
+@@ -369,6 +369,40 @@
+  * @return
+  */
+ 
++#ifdef L300_STATIC
++static void l300_record_damage(HGDI_WND wnd, int x, int y, int w, int h)
++{
++	int i, left, top, right, bottom;
++	if (wnd->invalid->null) { wnd->dirty_count = 0; wnd->dirty_overflow = 0; }
++	/* Bound coordinates before both area arithmetic and framebuffer use. */
++	if (w <= 0 || h <= 0 || x < -1024 || y < -768 || x >= 1024 || y >= 768)
++		return;
++	if (w > 2048) w = 2048;
++	if (h > 1536) h = 1536;
++	if (x < 0) { w += x; x = 0; }
++	if (y < 0) { h += y; y = 0; }
++	if (w > 1024-x) w = 1024-x;
++	if (h > 768-y) h = 768-y;
++	if (w <= 0 || h <= 0) return;
++	if (!wnd->dirty_overflow) {
++		/* Merge only when the union costs no more than separate writes. */
++		for (i = 0; i < wnd->dirty_count; i++) {
++			HGDI_RGN d = &wnd->dirty[i];
++			left = x < d->x ? x : d->x; top = y < d->y ? y : d->y;
++			right = x+w > d->x+d->w ? x+w : d->x+d->w;
++			bottom = y+h > d->y+d->h ? y+h : d->y+d->h;
++			if ((right-left)*(bottom-top) <= w*h+d->w*d->h) {
++				x=left; y=top; w=right-left; h=bottom-top;
++				wnd->dirty[i]=wnd->dirty[--wnd->dirty_count];
++				i=-1; /* Reconsider earlier entries after expanding the union. */
++			}
++		}
++		if (wnd->dirty_count == 64) wnd->dirty_overflow = 1;
++		else gdi_SetRgn(&wnd->dirty[wnd->dirty_count++], x, y, w, h);
++	}
++}
++#endif
++
+ int gdi_InvalidateRegion(HGDI_DC hdc, int x, int y, int w, int h)
+ {
+ 	GDI_RECT inv;
+@@ -384,6 +418,10 @@
+ 
+ 	invalid = hdc->hwnd->invalid;
+ 	bmp = (HGDI_BITMAP) hdc->selectedObject;
++
++#ifdef L300_STATIC
++	l300_record_damage(hdc->hwnd, x, y, w, h);
++#endif
+ 
+ 	if (invalid->null)
+ 	{

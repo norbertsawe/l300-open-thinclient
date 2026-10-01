@@ -1,10 +1,8 @@
 # L300 Open Thin Client
 
-Open thin-client software and engineering documentation for the NComputing L300.
+This is my attempt to turn the NComputing L300 into a more open and usable thin client.
 
-This project investigates running a standalone Linux-based RDP client directly
-on the L300 hardware, including framebuffer graphics, keyboard and mouse input,
-network booting, NAND deployment, and performance optimization.
+The main goal is to run a standalone Linux-based RDP client directly on the L300 hardware while keeping as much of the original hardware working as possible. So far I've been working on the framebuffer, keyboard and mouse input, network booting, NAND flashing, RDP performance, and understanding some of the weird hardware-specific parts of this device.
 
 <p align="center">
   <img src="docs/images/ncomputing-l300-mainboard-top.jpeg"
@@ -14,30 +12,30 @@ network booting, NAND deployment, and performance optimization.
 
 ## Stage 1
 
-Stage 1 has been tested on physical NComputing L300 hardware.
+Stage 1 is now working on a real NComputing L300.
 
-The current implementation provides:
+At this point I have:
 
-- Linux boot on the L300 ARM platform
-- direct framebuffer RDP client
-- 1024x768 display operation
+- Linux booting on the L300 ARM platform
+- a direct framebuffer RDP client
+- 1024x768 display output
 - Windows Remote Desktop connectivity
-- keyboard input
-- corrected USB mouse operation
-- corrected framebuffer color handling
+- working keyboard input
+- corrected USB mouse handling
+- corrected framebuffer colors
 - optimized framebuffer update paths
-- NAND boot support
-- reproducible verification and regression tests
+- working NAND boot
+- verification and regression tests for the changes
 
-Normal Windows desktop interaction is substantially improved by the
-PERFORMANCE-v1 rendering work.
+The PERFORMANCE-v1 work made normal Windows desktop usage **a lot better** compared to where this project started.
 
-Video playback remains considerably more demanding than ordinary desktop
-rendering and is not considered solved by Stage 1.
+Things like opening windows, moving around the desktop, typing, using the mouse and normal UI updates are much more usable now.
+
+Video is a different story. It improved a little, but 720p playback is still nowhere near smooth enough, so I'm not calling video performance solved yet.
 
 ## Hardware
 
-The tested platform is an NComputing L300 using:
+The device I'm testing on is an NComputing L300 with:
 
 - ARM926-class processor
 - 128 MiB NAND
@@ -46,24 +44,23 @@ The tested platform is an NComputing L300 using:
 - framebuffer display output
 - Tempest USB/input hardware
 
-This is an unusually old embedded Linux environment. Modern ARM Linux binaries
-cannot simply be copied to the device.
+This thing is old enough that getting newer software onto it isn't as simple as cross-compiling an ARM binary and copying it over. A lot of modern Linux software expects kernel and libc features that simply aren't there.
+
+That's one of the interesting parts of this project.
 
 ### Development setup
 
-Development and hardware validation were performed directly on physical
-NComputing L300 hardware using serial access for bootloader and kernel
-diagnostics.
+All of this is being tested on physical L300 hardware. Serial access has been especially useful for working with U-Boot, watching the kernel boot and recovering when something goes wrong.
 
 ![NComputing L300 development and debug setup](docs/images/ncomputing-l300-debug-setup.jpeg)
 
-
 ## Mouse compatibility
 
-Hardware investigation identified an alignment problem affecting 10-byte
-Tempest mouse reports.
+The mouse was one of the more annoying problems.
 
-The working interpretation is:
+After looking at the Tempest USB input path and comparing the actual reports coming from the hardware, I found an alignment problem affecting the 10-byte mouse reports.
+
+The working interpretation ended up being:
 
 ```text
 buttons = data[2] & 7
@@ -72,10 +69,9 @@ Y       = signed12((data[4] >> 4) | (data[5] << 4))
 wheel   = signed8(data[6])
 ```
 
-The compatibility implementation preserves the other observed decoder paths
-while correcting the affected mouse reports.
+The fix only changes the affected mouse reports. The other observed decoder paths and non-mouse events are left alone.
 
-See:
+More details are here:
 
 - `docs/mouse-root-cause.md`
 - `src/tempest/tempest_mouse_fix.c`
@@ -83,23 +79,23 @@ See:
 
 ## Rendering performance
 
-PERFORMANCE-v1 reduces unnecessary framebuffer work and improves several
-graphics paths used by the RDP client.
+Once the mouse and colors were working properly, the next big problem was rendering performance.
 
-The work includes:
+The original RDP client was doing quite a bit of unnecessary framebuffer work. PERFORMANCE-v1 changes several of those paths, including:
 
 - bounded framebuffer damage updates
 - packed RGB24 conversion
-- reduced per-pixel overhead
-- reduced redundant bitmap copies
+- less per-pixel overhead
+- fewer unnecessary bitmap copies
 - cursor update coalescing
-- improved input/graphics scheduling
-- handling already-buffered TLS data without unnecessarily waiting for socket readiness
+- better input/graphics scheduling
+- handling TLS data that is already buffered instead of unnecessarily waiting for socket readiness
 
-The included benchmark results are engineering measurements from the test
-environment and should not be interpreted as predicted physical-device FPS.
+These changes made a very noticeable difference on the actual L300 for normal desktop use.
 
-See `docs/performance.md` for the investigation and methodology.
+There are also benchmark numbers in the repository, but those measurements come from the development/test environment. They shouldn't be read as expected FPS numbers for the real L300.
+
+The full investigation is in `docs/performance.md`.
 
 ## Repository structure
 
@@ -113,59 +109,63 @@ docs/           Testing, performance and deployment documentation
 release/        Release checksums
 ```
 
-## Firmware baseline and acknowledgements
+## Where the firmware came from
 
-The original NComputing L300/SPEAR600 firmware material used as the baseline
-for this work was obtained from the
+I didn't start this project from nothing.
+
+The original L300/SPEAR600 firmware material I used as the starting point came from:
+
 [egerobotics/NCOMPUTING_L300_SPEAR600](https://github.com/egerobotics/NCOMPUTING_L300_SPEAR600)
-repository.
 
-That repository provided the starting firmware/reference material used during
-the investigation of the L300 platform.
+That repository gave me the firmware/reference material I needed to start digging into how the L300 works.
 
-This project builds on that baseline with additional hardware investigation,
-mouse/input compatibility work, framebuffer color correction, RDP client
-changes, rendering-performance work, testing, image-building tooling, and
-hardware validation.
+From there, this project adds the hardware investigation, mouse/input fixes, framebuffer color correction, RDP client changes, rendering optimizations, tests, image-building tools and the hardware testing I've done on the device.
 
-The upstream firmware and NComputing components remain subject to their
-respective ownership and licensing terms.
+The original firmware and NComputing components still belong to their respective owners and keep their original licensing terms.
 
 ## Firmware
 
-This repository currently focuses on source code, patches, tests, documentation
-and build tools.
+I'm keeping this repository mainly about the source code, patches, tests, documentation and build tools.
 
-Some components required by the original L300 environment originate from
-NComputing firmware and are therefore not automatically redistributed with
-this project.
+Some pieces needed by the L300 come from the original NComputing firmware, so I'm not automatically redistributing those components here.
 
-## NAND warning
+## A warning about NAND
 
-Writing incorrect data to NAND can make the device unbootable.
+Be careful with the NAND commands in this project.
 
-Before flashing:
+Writing the wrong thing to the wrong NAND offset can leave the L300 unable to boot.
 
-1. Verify the exact board and NAND geometry.
-2. Inspect the NAND bad-block table.
+Before flashing anything:
+
+1. Verify the board and NAND geometry.
+2. Check the NAND bad-block table.
 3. Keep backups of the original firmware.
-4. Verify transferred data with checksums.
-5. Maintain a tested serial or USB recovery method.
-6. Test experimental firmware from RAM whenever practical.
+4. Check transferred data with CRCs/checksums.
+5. Have a working serial or USB recovery method.
+6. Test experimental firmware from RAM first whenever possible.
 
-## Development status
+I've flashed and tested the Stage 1 work on my hardware, but that doesn't mean every L300 necessarily has the exact same NAND condition or layout.
 
-Stage 1 establishes the framebuffer RDP, input and rendering-performance
-baseline.
+## Where the project is going
 
-Further development is focused on a newer RDP stack and additional thin-client
-functionality, including audio and storage redirection.
+Stage 1 gave me a working baseline: RDP framebuffer output, keyboard/mouse input, correct colors and much better normal desktop rendering.
 
-Those features are not part of the Stage 1 hardware-proven feature set.
+The next big step is the RDP stack itself.
+
+The client we're currently using is very old, and that starts becoming a problem when we want things people actually expect from a thin client, especially:
+
+- audio
+- storage/drive redirection
+- better protocol support
+- better overall RDP performance
+
+I'm currently investigating a newer FreeRDP version that can still run within the limitations of the L300's ARM926 and Linux 2.6.19 environment.
+
+That work is still experimental, so I'm keeping it separate from the Stage 1 functionality that I've already tested on the actual hardware.
 
 ## Documentation
 
-Start with:
+If you want to dig deeper into what was done, start here:
 
 - `docs/mouse-root-cause.md`
 - `docs/performance.md`
@@ -176,7 +176,6 @@ Start with:
 
 ## Disclaimer
 
-This is an independent community engineering project and is not affiliated
-with or endorsed by NComputing.
+This is an independent project. It isn't affiliated with or endorsed by NComputing.
 
-Hardware modification and firmware replacement are performed at your own risk.
+If you're experimenting with the firmware or NAND on your own L300, make sure you have a recovery path first. Hardware and firmware modifications are at your own risk.

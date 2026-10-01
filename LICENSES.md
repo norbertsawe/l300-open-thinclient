@@ -3,6 +3,20 @@
 This repository contains work originating from multiple sources and therefore
 is not distributed under a single blanket license.
 
+### Firmware research baseline
+
+The original L300/SPEAR600 firmware/reference material used during development
+was obtained from:
+
+`egerobotics/NCOMPUTING_L300_SPEAR600`
+
+https://github.com/egerobotics/NCOMPUTING_L300_SPEAR600
+
+This repository does not claim authorship or ownership of that upstream
+firmware or other NComputing components. The upstream material served as the
+firmware baseline for the hardware investigation and subsequent modifications
+documented here.
+
 ## FreeRDP-derived components
 
 The L300 RDP frontend and associated FreeRDP modifications are derived from

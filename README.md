@@ -113,6 +113,24 @@ docs/           Testing, performance and deployment documentation
 release/        Release checksums
 ```
 
+## Firmware baseline and acknowledgements
+
+The original NComputing L300/SPEAR600 firmware material used as the baseline
+for this work was obtained from the
+[egerobotics/NCOMPUTING_L300_SPEAR600](https://github.com/egerobotics/NCOMPUTING_L300_SPEAR600)
+repository.
+
+That repository provided the starting firmware/reference material used during
+the investigation of the L300 platform.
+
+This project builds on that baseline with additional hardware investigation,
+mouse/input compatibility work, framebuffer color correction, RDP client
+changes, rendering-performance work, testing, image-building tooling, and
+hardware validation.
+
+The upstream firmware and NComputing components remain subject to their
+respective ownership and licensing terms.
+
 ## Firmware
 
 This repository currently focuses on source code, patches, tests, documentation

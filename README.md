@@ -52,8 +52,6 @@ That's one of the interesting parts of this project.
 
 All of this is being tested on physical L300 hardware. Serial access has been especially useful for working with U-Boot, watching the kernel boot and recovering when something goes wrong.
 
-![NComputing L300 development and debug setup](docs/images/ncomputing-l300-debug-setup.jpeg)
-
 ## Mouse compatibility
 
 The mouse was one of the more annoying problems.
